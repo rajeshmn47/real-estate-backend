@@ -2,6 +2,7 @@ const express = require('express');
 const {
   createProperty,
   getProperties,
+  searchCities,
   getProperty,
   updateProperty,
   deleteProperty,
@@ -14,6 +15,7 @@ const upload = require('../middleware/upload');
 const router = express.Router();
 
 router.post('/', authenticate, upload.array('images', 5), createProperty);
+router.get('/cities', searchCities);
 router.get('/', getProperties);
 router.get('/:id', getProperty);
 router.put('/:id', authenticate, upload.array('images', 5), updateProperty);

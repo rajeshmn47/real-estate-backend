@@ -6,75 +6,75 @@ const City = require('../models/City');
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const resolveCityId = async (cityValue, stateValue = 'Unknown') => {
-  if (!cityValue) return null;
+    if (!cityValue) return null;
 
-  const cityString = String(cityValue).trim();
-  if (!cityString) return null;
+    const cityString = String(cityValue).trim();
+    if (!cityString) return null;
 
-  if (mongoose.Types.ObjectId.isValid(cityString)) {
-    return cityString;
-  }
+    if (mongoose.Types.ObjectId.isValid(cityString)) {
+        return cityString;
+    }
 
-  let city = await City.findOne({ name: new RegExp(`^${escapeRegex(cityString)}$`, 'i') });
-  if (!city) {
-    city = await City.create({ name: cityString, state: stateValue || 'Unknown' });
-  }
+    let city = await City.findOne({ name: new RegExp(`^${escapeRegex(cityString)}$`, 'i') });
+    if (!city) {
+        city = await City.create({ name: cityString, state: stateValue || 'Unknown' });
+    }
 
-  return city._id;
+    return city._id;
 };
 
 // ===== CREATE property =====
 exports.createProperty = async (req, res) => {
-  try {
-    const {
-      title,
-      description,
-      price,
-      area,
-      bedrooms,
-      bathrooms,
-      propertyType,
-      listingType,
-      location,
-      city,
-      state,
-      zipCode,
-      coordinates,
-      features,
-      amenities,
-    } = req.body;
+    try {
+        const {
+            title,
+            description,
+            price,
+            area,
+            bedrooms,
+            bathrooms,
+            propertyType,
+            listingType,
+            location,
+            city,
+            state,
+            zipCode,
+            coordinates,
+            features,
+            amenities,
+        } = req.body;
 
-    const images = req.files ? req.files.map((file) => `/uploads/${file.filename}`) : [];
-    const cityId = await resolveCityId(city, state);
+        const images = req.files ? req.files.map((file) => `/uploads/${file.filename}`) : [];
+        const cityId = await resolveCityId(city, state);
 
-    const property = await Property.create({
-      title,
-      description,
-      price,
-      area,
-      bedrooms,
-      bathrooms,
-      propertyType,
-      listingType,
-      location,
-      city: cityId,
-      state,
-      zipCode,
-      coordinates: coordinates ? JSON.parse(coordinates) : undefined,
-      images,
-      features: features ? features.split(',').map((item) => item.trim()) : [],
-      amenities: amenities ? JSON.parse(amenities) : [],
-      postedBy: req.user.id,
-      isVerified: req.user.role === 'admin',
-    });
+        const property = await Property.create({
+            title,
+            description,
+            price,
+            area,
+            bedrooms,
+            bathrooms,
+            propertyType,
+            listingType,
+            location,
+            city: cityId,
+            state,
+            zipCode,
+            coordinates: coordinates ? JSON.parse(coordinates) : undefined,
+            images,
+            features: features ? features.split(',').map((item) => item.trim()) : [],
+            amenities: amenities ? JSON.parse(amenities) : [],
+            postedBy: req.user.id,
+            isVerified: req.user.role === 'admin',
+        });
 
-    res.status(201).json(property);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
+        res.status(201).json(property);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
 };
 
-// ===== GET all properties =====
+// controllers/propertyController.js
 exports.getProperties = async (req, res) => {
   try {
     const {
@@ -91,17 +91,36 @@ exports.getProperties = async (req, res) => {
     } = req.query;
 
     const filter = { isPublished: true };
-    if (city) {
-      if (mongoose.Types.ObjectId.isValid(city)) {
-        filter.city = city;
+
+    if (city && city.trim() !== '') {
+      const searchTerm = city.trim();
+
+      if (mongoose.Types.ObjectId.isValid(searchTerm)) {
+        filter.city = searchTerm;
       } else {
-        const cities = await City.find({ name: new RegExp(escapeRegex(String(city)), 'i') }).select('_id');
-        filter.city = { $in: cities.map((item) => item._id) };
+        const matchingCities = await City.find({ name: new RegExp(escapeRegex(searchTerm), 'i') }).select('_id');
+        const cityIds = matchingCities.map((item) => item._id);
+
+        if (cityIds.length > 0) {
+          filter.city = { $in: cityIds };
+        } else {
+          filter.$or = [
+            { location: new RegExp(searchTerm, 'i') },
+            { title: new RegExp(searchTerm, 'i') },
+          ];
+        }
       }
     }
+
     if (listingType) filter.listingType = listingType;
+
+    // 🏠 Property type
     if (propertyType) filter.propertyType = propertyType;
+
+    // 🛏️ Bedrooms
     if (bedrooms) filter.bedrooms = Number(bedrooms);
+
+    // 💰 Price range
     if (minPrice || maxPrice) {
       filter.price = {};
       if (minPrice) filter.price.$gte = Number(minPrice);
@@ -113,7 +132,7 @@ exports.getProperties = async (req, res) => {
     const properties = await Property.find(filter)
       .populate('postedBy', 'name email phone avatar')
       .sort(sort)
-      .skip((page - 1) * Number(limit))
+      .skip((page - 1) * limit)
       .limit(Number(limit));
 
     const total = await Property.countDocuments(filter);
@@ -124,6 +143,24 @@ exports.getProperties = async (req, res) => {
       page: Number(page),
       totalPages: Math.ceil(total / limit),
     });
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ===== SEARCH CITY AUTOCOMPLETE =====
+exports.searchCities = async (req, res) => {
+  try {
+    const { search = '' } = req.query;
+    const query = String(search).trim();
+    if (!query) {
+      return res.json([]);
+    }
+
+    const regex = new RegExp(escapeRegex(query), 'i');
+    const cities = await City.find({ name: regex }).limit(10).select('name state');
+    res.json(cities);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -148,92 +185,92 @@ exports.getProperty = async (req, res) => {
 
 // ===== UPDATE property =====
 exports.updateProperty = async (req, res) => {
-  try {
-    const property = await Property.findById(req.params.id);
-    if (!property) return res.status(404).json({ message: 'Property not found' });
+    try {
+        const property = await Property.findById(req.params.id);
+        if (!property) return res.status(404).json({ message: 'Property not found' });
 
-    if (property.postedBy.toString() !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
+        if (property.postedBy.toString() !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ message: 'Unauthorized' });
+        }
 
-    const updates = { ...req.body };
-    if (req.files && req.files.length > 0) {
-      const newImages = req.files.map((file) => `/uploads/${file.filename}`);
-      updates.images = [...(property.images || []), ...newImages];
-    }
+        const updates = { ...req.body };
+        if (req.files && req.files.length > 0) {
+            const newImages = req.files.map((file) => `/uploads/${file.filename}`);
+            updates.images = [...(property.images || []), ...newImages];
+        }
 
-    if (updates.coordinates && typeof updates.coordinates === 'string') {
-      updates.coordinates = JSON.parse(updates.coordinates);
-    }
-    if (updates.features && typeof updates.features === 'string') {
-      updates.features = updates.features.split(',').map((item) => item.trim());
-    }
-    if (updates.amenities && typeof updates.amenities === 'string') {
-      updates.amenities = JSON.parse(updates.amenities);
-    }
+        if (updates.coordinates && typeof updates.coordinates === 'string') {
+            updates.coordinates = JSON.parse(updates.coordinates);
+        }
+        if (updates.features && typeof updates.features === 'string') {
+            updates.features = updates.features.split(',').map((item) => item.trim());
+        }
+        if (updates.amenities && typeof updates.amenities === 'string') {
+            updates.amenities = JSON.parse(updates.amenities);
+        }
 
-    const updated = await Property.findByIdAndUpdate(req.params.id, updates, {
-      new: true,
-      runValidators: true,
-    });
+        const updated = await Property.findByIdAndUpdate(req.params.id, updates, {
+            new: true,
+            runValidators: true,
+        });
 
-    res.json(updated);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
+        res.json(updated);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
 };
 
 // ===== DELETE property =====
 exports.deleteProperty = async (req, res) => {
-  try {
-    const property = await Property.findById(req.params.id);
-    if (!property) return res.status(404).json({ message: 'Property not found' });
+    try {
+        const property = await Property.findById(req.params.id);
+        if (!property) return res.status(404).json({ message: 'Property not found' });
 
-    if (property.postedBy.toString() !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Unauthorized' });
+        if (property.postedBy.toString() !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ message: 'Unauthorized' });
+        }
+
+        await property.remove();
+        res.json({ message: 'Property deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
-
-    await property.remove();
-    res.json({ message: 'Property deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
 };
 
 // ===== VERIFY property =====
 exports.verifyProperty = async (req, res) => {
-  try {
-    const property = await Property.findByIdAndUpdate(
-      req.params.id,
-      { isVerified: true },
-      { new: true }
-    );
-    if (!property) return res.status(404).json({ message: 'Property not found' });
+    try {
+        const property = await Property.findByIdAndUpdate(
+            req.params.id,
+            { isVerified: true },
+            { new: true }
+        );
+        if (!property) return res.status(404).json({ message: 'Property not found' });
 
-    res.json({ message: 'Property verified', property });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+        res.json({ message: 'Property verified', property });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 };
 
 // ===== TOGGLE FAVORITE =====
 exports.toggleFavorite = async (req, res) => {
-  try {
-    const propertyId = req.params.id;
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    try {
+        const propertyId = req.params.id;
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
 
-    const index = user.favorites.indexOf(propertyId);
-    if (index > -1) {
-      user.favorites.splice(index, 1);
-      await user.save();
-      return res.json({ message: 'Removed from favorites', isFavorite: false });
+        const index = user.favorites.indexOf(propertyId);
+        if (index > -1) {
+            user.favorites.splice(index, 1);
+            await user.save();
+            return res.json({ message: 'Removed from favorites', isFavorite: false });
+        }
+
+        user.favorites.push(propertyId);
+        await user.save();
+        res.json({ message: 'Added to favorites', isFavorite: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
-
-    user.favorites.push(propertyId);
-    await user.save();
-    res.json({ message: 'Added to favorites', isFavorite: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
 };
