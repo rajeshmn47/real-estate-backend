@@ -47,6 +47,30 @@ exports.createProperty = async (req, res) => {
         const images = req.files ? req.files.map((file) => `/uploads/${file.filename}`) : [];
         const cityId = await resolveCityId(city, state);
 
+        // ✅ Handle features – array or string
+        let featuresArray = [];
+        if (features) {
+            if (Array.isArray(features)) {
+                featuresArray = features;
+            } else if (typeof features === 'string') {
+                featuresArray = features.split(',').map((item) => item.trim());
+            }
+        }
+
+        // ✅ Handle amenities – array or string
+        let amenitiesArray = [];
+        if (amenities) {
+            if (Array.isArray(amenities)) {
+                amenitiesArray = amenities;
+            } else if (typeof amenities === 'string') {
+                try {
+                    amenitiesArray = JSON.parse(amenities);
+                } catch {
+                    amenitiesArray = amenities.split(',').map((item) => item.trim());
+                }
+            }
+        }
+
         const property = await Property.create({
             title,
             description,
@@ -62,14 +86,15 @@ exports.createProperty = async (req, res) => {
             zipCode,
             coordinates: coordinates ? JSON.parse(coordinates) : undefined,
             images,
-            features: features ? features.split(',').map((item) => item.trim()) : [],
-            amenities: amenities ? JSON.parse(amenities) : [],
+            features: featuresArray,
+            amenities: amenitiesArray,
             postedBy: req.user.id,
             isVerified: req.user.role === 'admin',
         });
 
         res.status(201).json(property);
     } catch (error) {
+        console.error('Create property error:', error);
         res.status(400).json({ error: error.message });
     }
 };
